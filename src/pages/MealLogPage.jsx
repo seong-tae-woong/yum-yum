@@ -11,6 +11,12 @@ const REACTIONS = [
   { value: "ALLERGY", emoji: "⚠️", label: "알레르기" }
 ]
 
+const MEAL_SLOTS = [
+  { value: "아침", label: "아침", emoji: "🌅", color: "#FFD166" },
+  { value: "점심", label: "점심", emoji: "☀️", color: "#A8D8B9" },
+  { value: "저녁", label: "저녁", emoji: "🌙", color: "#FF8FAB" }
+]
+
 const AMOUNTS = [
   { value: "GOOD", label: "잘 먹음", emoji: "🥣" },
   { value: "NORMAL", label: "보통", emoji: "🥄" },
@@ -31,6 +37,7 @@ function MealLogPage({ onBack, baby }) {
   const [calendarMonth, setCalendarMonth] = useState(new Date())
   const [form, setForm] = useState({
     recipeTitle: "",
+    slot: "아침",
     amount: "GOOD",
     reaction: "LOVE",
     note: ""
@@ -93,6 +100,7 @@ function MealLogPage({ onBack, baby }) {
         userId: user.uid,
         babyId: baby?.id || "",
         recipeTitle: form.recipeTitle.trim(),
+        slot: form.slot,
         date: selectedDate,
         amount: form.amount,
         reaction: form.reaction,
@@ -106,7 +114,7 @@ function MealLogPage({ onBack, baby }) {
         await saveImage(docRef.id, imagePreview)
       }
 
-      setForm({ recipeTitle: "", amount: "GOOD", reaction: "LOVE", note: "" })
+      setForm({ recipeTitle: "", slot: "아침", amount: "GOOD", reaction: "LOVE", note: "" })
       setImagePreview(null)
       setImageFile(null)
       setShowAdd(false)
@@ -224,7 +232,15 @@ function MealLogPage({ onBack, baby }) {
               return (
                 <div key={log.id} className="p-4 rounded-2xl" style={{ background: "#fff" }}>
                   <div className="flex items-center justify-between mb-2">
-                    <p className="text-base font-bold" style={{ color: "#3D3D3D" }}>{log.recipeTitle}</p>
+                    <div className="flex items-center gap-2">
+                      {log.slot && (
+                        <span className="px-2 py-0.5 rounded text-xs font-bold text-white"
+                          style={{ background: MEAL_SLOTS.find(s => s.value === log.slot)?.color || "#aaa" }}>
+                          {log.slot}
+                        </span>
+                      )}
+                      <p className="text-base font-bold" style={{ color: "#3D3D3D" }}>{log.recipeTitle}</p>
+                    </div>
                     <span className="text-xl">{reaction?.emoji}</span>
                   </div>
                   <div className="flex gap-2">
@@ -270,6 +286,27 @@ function MealLogPage({ onBack, baby }) {
             <p className="text-xs mb-1" style={{ color: "#bbb" }}>날짜: {selectedDate}</p>
 
             <div className="flex flex-col gap-4 mt-3">
+              {/* 끼니 선택 */}
+              <div>
+                <p className="text-sm font-bold mb-2" style={{ color: "#3D3D3D" }}>끼니</p>
+                <div className="flex gap-2">
+                  {MEAL_SLOTS.map(s => (
+                    <button
+                      key={s.value}
+                      onClick={() => setForm(f => ({ ...f, slot: s.value }))}
+                      className="flex-1 py-2.5 rounded-xl text-sm font-bold text-center"
+                      style={{
+                        background: form.slot === s.value ? s.color : "#FFF9F5",
+                        color: form.slot === s.value ? "#fff" : "#3D3D3D",
+                        border: form.slot === s.value ? "none" : "1px solid #eee"
+                      }}
+                    >
+                      {s.emoji} {s.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <input
                 placeholder="이유식 이름 (예: 소고기당근죽)"
                 value={form.recipeTitle}

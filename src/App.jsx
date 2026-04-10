@@ -7,6 +7,7 @@ import BabyProfilePage from "./pages/BabyProfilePage"
 import IngredientsPage from "./pages/IngredientsPage"
 import RecipePage from "./pages/RecipePage"
 import MealLogPage from "./pages/MealLogPage"
+import MealSchedulePage from "./pages/MealSchedulePage"
 import useAuth from "./hooks/useAuth"
 
 function App() {
@@ -65,6 +66,7 @@ function App() {
   if (page === "ingredients") return <IngredientsPage onBack={() => setPage("home")} />
   if (page === "recipe") return <RecipePage onBack={() => setPage("home")} baby={baby} />
   if (page === "mealLog") return <MealLogPage onBack={() => setPage("home")} baby={baby} />
+  if (page === "mealSchedule") return <MealSchedulePage onBack={() => setPage("home")} baby={baby} />
 
   return <HomePage onNavigate={setPage} baby={baby} />
 }

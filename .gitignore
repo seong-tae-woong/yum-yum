@@ -22,3 +22,18 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Firebase
+.firebase/
+.firebaserc
+
+# Functions dependencies
+functions/node_modules/
+
+# Claude Code session data
+.claude/
+
+# Environment variables (API keys etc.)
+.env
+.env.local
+.env.*.local

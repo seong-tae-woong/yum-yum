@@ -75,107 +75,100 @@ function HomePage({ onNavigate, baby }) {
         </button>
       </header>
 
-      {/* 인사말 */}
-      <div className="px-5 pb-4">
+      {/* 인사말 + 아기 프로필/냉장고 아이콘 */}
+      <div className="px-5 pb-2">
         {baby ? (
-          <>
-            <p className="text-2xl font-bold leading-snug" style={{ color: "#3D3D3D" }}>
-              {baby.name}의 이유식 도우미 🌱
-            </p>
-            <div className="mt-2 inline-block px-3 py-1 rounded-full text-sm font-bold"
-              style={{ background: "#E8F5E9", color: "#4CAF50" }}>
-              {getStageLabel(months)}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-2xl font-bold leading-snug" style={{ color: "#3D3D3D" }}>
+                {baby.name}의 식사 도우미 🌱
+              </p>
+              <div className="mt-2 inline-block px-3 py-1 rounded-full text-sm font-bold"
+                style={{ background: "#E8F5E9", color: "#4CAF50" }}>
+                {getStageLabel(months)}
+              </div>
             </div>
-          </>
+            <div className="flex gap-2">
+              <button onClick={() => onNavigate("babyProfile")}
+                className="w-11 h-11 rounded-full flex items-center justify-center text-xl"
+                style={{ background: "#FFE0E6" }}>
+                👶
+              </button>
+              <button onClick={() => onNavigate("ingredients")}
+                className="w-11 h-11 rounded-full flex items-center justify-center text-xl relative"
+                style={{ background: "#FFF8E1" }}>
+                🧊
+                {urgentCount > 0 && (
+                  <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white"
+                    style={{ background: "#FF6B6B" }}>
+                    {urgentCount}
+                  </span>
+                )}
+              </button>
+            </div>
+          </div>
         ) : (
-          <p className="text-2xl font-bold leading-snug" style={{ color: "#3D3D3D" }}>
-            <span style={{ color: "#FF8FAB" }}>{user?.displayName}</span>님,<br />
-            아기 프로필을 먼저 등록해주세요 👶
-          </p>
+          <div className="flex items-center justify-between">
+            <p className="text-2xl font-bold leading-snug" style={{ color: "#3D3D3D" }}>
+              <span style={{ color: "#FF8FAB" }}>{user?.displayName}</span>님,<br />
+              아기 프로필을 먼저 등록해주세요 👶
+            </p>
+            <button onClick={() => onNavigate("babyProfile")}
+              className="w-11 h-11 rounded-full flex items-center justify-center text-xl"
+              style={{ background: "#FFE0E6" }}>
+              👶
+            </button>
+          </div>
         )}
       </div>
 
-      {/* 소비기한 알람 */}
-      {urgentCount > 0 && (
-        <button
-          onClick={() => onNavigate("ingredients")}
-          className="mx-5 mb-4 px-4 py-3 rounded-2xl flex items-center gap-3 w-[calc(100%-40px)]"
-          style={{ background: "#FFF0E8" }}
-        >
-          <span className="text-xl">⚠️</span>
-          <div className="text-left">
-            <p className="text-sm font-bold" style={{ color: "#FF8FAB" }}>
-              소비기한 임박 재료 {urgentCount}개
+      {/* 아기 성장 일러스트 */}
+      <div className="px-5 py-4">
+        <div className="rounded-3xl py-6 flex flex-col items-center" style={{ background: "linear-gradient(180deg, #FFF0E8 0%, #FFE0E6 100%)" }}>
+          <div style={{ fontSize: months != null ? (months < 7 ? 60 : months < 10 ? 75 : months < 13 ? 90 : 100) : 70 }}
+            className="transition-all duration-500">
+            {months != null ? (
+              baby?.gender === "female"
+                ? (months < 7 ? "👶" : months < 10 ? "👧" : months < 13 ? "👧" : "👩")
+                : (months < 7 ? "👶" : months < 10 ? "👦" : months < 13 ? "👦" : "🧑")
+            ) : "👶"}
+          </div>
+          <p className="mt-2 text-sm font-bold" style={{ color: "#FF8FAB" }}>
+            {baby ? `${months}개월 · ${getStageLabel(months)}` : "아기를 등록해주세요"}
+          </p>
+          {baby && (
+            <p className="mt-1 text-xs" style={{ color: "#FFB084" }}>
+              {months < 7 ? "음.. 이게 뭐지? 냠냠 첫 맛!" :
+               months < 10 ? "이것도 맛있고 저것도 맛있어!" :
+               months < 13 ? "나 이제 잘 먹을 수 있다구요!" :
+               "숟가락도 내가 들 수 있어요!"}
             </p>
-            <p className="text-xs" style={{ color: "#FFB084" }}>
-              냉장고 관리에서 확인해보세요 →
-            </p>
-          </div>
-        </button>
-      )}
+          )}
+        </div>
+      </div>
 
-      {/* 메뉴 */}
-      <p className="px-5 mb-3 text-base font-bold" style={{ color: "#bbb" }}>메뉴</p>
-      <div className="px-5 flex flex-col gap-2">
-
-        {/* 아기 프로필 */}
-        <button onClick={() => onNavigate("babyProfile")} className="flex items-center justify-between px-4 py-4 rounded-2xl w-full" style={{ background: "#fff" }}>
+      <div className="px-5 flex flex-col gap-3">
+        {/* 주간 식단표 */}
+        <button onClick={() => onNavigate("mealSchedule")}
+          className="flex items-center justify-between px-5 py-5 rounded-2xl w-full"
+          style={{ background: "#fff", boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }}>
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl" style={{ background: "#FFE0E6" }}>
-              👶
-            </div>
-            <div className="text-left">
-              <p className="text-lg font-bold" style={{ color: "#3D3D3D" }}>아기 프로필</p>
-              <p className="text-sm" style={{ color: "#bbb" }}>
-                {baby ? `${baby.name} · ${months}개월` : "아기 정보 등록하기"}
-              </p>
-            </div>
+            <span className="text-3xl">📅</span>
+            <p className="text-2xl font-bold" style={{ color: "#3D3D3D" }}>우리 아기 식단표</p>
           </div>
-          <span style={{ color: "#FFB8C9", fontSize: 20 }}>›</span>
-        </button>
-
-        {/* 이유식 레시피 */}
-        <button onClick={() => onNavigate("recipe")} className="flex items-center justify-between px-4 py-4 rounded-2xl w-full" style={{ background: "#fff" }}>
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl" style={{ background: "#E8F5E9" }}>
-              🥣
-            </div>
-            <div className="text-left">
-              <p className="text-lg font-bold" style={{ color: "#3D3D3D" }}>이유식 레시피</p>
-              <p className="text-sm" style={{ color: "#bbb" }}>월령별 추천 & 검색</p>
-            </div>
-          </div>
-          <span style={{ color: "#FFB8C9", fontSize: 20 }}>›</span>
-        </button>
-
-        {/* 냉장고 관리 */}
-        <button onClick={() => onNavigate("ingredients")} className="flex items-center justify-between px-4 py-4 rounded-2xl w-full" style={{ background: "#fff" }}>
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl" style={{ background: "#FFF8E1" }}>
-              🧊
-            </div>
-            <div className="text-left">
-              <p className="text-lg font-bold" style={{ color: "#3D3D3D" }}>냉장고 관리</p>
-              <p className="text-sm" style={{ color: "#bbb" }}>재료 등록 & 소비기한</p>
-            </div>
-          </div>
-          <span style={{ color: "#FFB8C9", fontSize: 20 }}>›</span>
+          <span style={{ color: "#FFB8C9", fontSize: 24 }}>›</span>
         </button>
 
         {/* 식사 일기 */}
-        <button onClick={() => onNavigate("mealLog")} className="flex items-center justify-between px-4 py-4 rounded-2xl w-full" style={{ background: "#fff" }}>
+        <button onClick={() => onNavigate("mealLog")}
+          className="flex items-center justify-between px-5 py-5 rounded-2xl w-full"
+          style={{ background: "#fff", boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }}>
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl" style={{ background: "#E3F2FD" }}>
-              📖
-            </div>
-            <div className="text-left">
-              <p className="text-lg font-bold" style={{ color: "#3D3D3D" }}>식사 일기</p>
-              <p className="text-sm" style={{ color: "#bbb" }}>날짜별 이유식 기록</p>
-            </div>
+            <span className="text-3xl">📖</span>
+            <p className="text-2xl font-bold" style={{ color: "#3D3D3D" }}>식사 일기</p>
           </div>
-          <span style={{ color: "#FFB8C9", fontSize: 20 }}>›</span>
+          <span style={{ color: "#FFB8C9", fontSize: 24 }}>›</span>
         </button>
-
       </div>
 
       {/* 이유식 재료 스토리 */}

@@ -12,6 +12,7 @@ const COMMON_ALLERGENS = [
 function BabyProfilePage({ onComplete }) {
   const { user } = useAuth()
   const [name, setName] = useState("")
+  const [gender, setGender] = useState("")
   const [birthDate, setBirthDate] = useState("")
   const [allergies, setAllergies] = useState([])
   const [saving, setSaving] = useState(false)
@@ -31,6 +32,7 @@ function BabyProfilePage({ onComplete }) {
         const baby = { id: snapshot.docs[0].id, ...snapshot.docs[0].data() }
         setExistingBaby(baby)
         setName(baby.name)
+        setGender(baby.gender || "")
         setBirthDate(baby.birthDate)
         setAllergies(baby.allergies || [])
       }
@@ -51,6 +53,7 @@ function BabyProfilePage({ onComplete }) {
     try {
       const data = {
         name: name.trim(),
+        gender,
         birthDate,
         allergies,
         triedIngredients: existingBaby?.triedIngredients || [],
@@ -106,6 +109,34 @@ function BabyProfilePage({ onComplete }) {
             className="w-full px-4 py-3 rounded-xl text-base outline-none"
             style={{ background: "#FFF9F5", border: "1px solid #FFE0E6", color: "#3D3D3D" }}
           />
+        </div>
+
+        <div className="p-5 rounded-3xl mb-4" style={{ background: "#fff" }}>
+          <label className="text-sm font-bold mb-2 block" style={{ color: "#3D3D3D" }}>성별</label>
+          <div className="flex gap-3">
+            <button
+              onClick={() => setGender("male")}
+              className="flex-1 py-3 rounded-xl text-base font-bold transition"
+              style={{
+                background: gender === "male" ? "#D6EEFF" : "#FFF9F5",
+                color: gender === "male" ? "#4A90D9" : "#bbb",
+                border: gender === "male" ? "2px solid #4A90D9" : "1px solid #FFE0E6"
+              }}
+            >
+              👦 남아
+            </button>
+            <button
+              onClick={() => setGender("female")}
+              className="flex-1 py-3 rounded-xl text-base font-bold transition"
+              style={{
+                background: gender === "female" ? "#FFE0E6" : "#FFF9F5",
+                color: gender === "female" ? "#FF8FAB" : "#bbb",
+                border: gender === "female" ? "2px solid #FF8FAB" : "1px solid #FFE0E6"
+              }}
+            >
+              👧 여아
+            </button>
+          </div>
         </div>
 
         <div className="p-5 rounded-3xl mb-4" style={{ background: "#fff" }}>
