@@ -397,47 +397,12 @@ function MealSchedulePage({ onBack, baby }) {
   }
 
   // ===== 장보기 목록 =====
-  if (showShoppingList && allShoppingList.length > 0) {
-    const shoppingList = allShoppingList
-    const grouped = {}
-    ;(shoppingList || []).forEach(item => {
-      const cat = item.category || "기타"
-      if (!grouped[cat]) grouped[cat] = []
-      grouped[cat].push(item)
-    })
-
-    return (
-      <div className="min-h-screen pb-10" style={{ background: "#FFF9F5" }}>
-        <div className="flex items-center justify-between px-5 pt-6 pb-4">
-          <button onClick={() => setShowShoppingList(false)} className="text-2xl" style={{ color: "#FF8FAB" }}>←</button>
-          <p className="text-lg font-bold" style={{ color: "#3D3D3D" }}>장보기 목록</p>
-          <div className="w-8" />
-        </div>
-        {shoppingList && shoppingList.length > 0 ? (
-          <div className="px-5 flex flex-col gap-4">
-            {Object.entries(grouped).map(([category, items]) => (
-              <div key={category} className="rounded-2xl p-4" style={{ background: "#fff", boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }}>
-                <p className="text-sm font-bold mb-3" style={{ color: "#FF8FAB" }}>{category}</p>
-                {items.map((item, i) => (
-                  <div key={i} className="flex items-center justify-between py-2 border-b" style={{ borderColor: "#f5f5f5" }}>
-                    <div className="flex items-center gap-2">
-                      <span>🛒</span>
-                      <span className="text-sm font-bold" style={{ color: "#3D3D3D" }}>{item.name}</span>
-                    </div>
-                    <span className="text-sm" style={{ color: "#aaa" }}>{item.amount}{item.unit}</span>
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="mx-5 p-8 rounded-2xl text-center" style={{ background: "#fff" }}>
-            <div className="text-4xl mb-3">🎉</div>
-            <p className="text-lg font-bold" style={{ color: "#3D3D3D" }}>추가 구매할 재료가 없어요!</p>
-          </div>
-        )}
-      </div>
-    )
+  if (showShoppingList) {
+    return <ShoppingListView
+      shoppingList={allShoppingList}
+      onBack={() => setShowShoppingList(false)}
+      userId={user?.uid}
+    />
   }
 
   // ===== 생성 모드 =====
@@ -772,6 +737,187 @@ function MealSchedulePage({ onBack, baby }) {
                 "🪄 새 메뉴 만들기"
               )}
             </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+const CATEGORIES = ["채소", "육류", "해산물", "유제품", "곡류", "양념", "기타"]
+const UNITS = ["개", "g", "kg", "ml", "L", "봉", "팩", "묶음"]
+const DEFAULT_EXPIRY = {
+  "채소": 5, "육류": 3, "해산물": 2, "유제품": 7, "곡류": 30, "양념": 90, "기타": 7
+}
+
+function ShoppingListView({ shoppingList, onBack, userId }) {
+  const [addedItems, setAddedItems] = useState({}) // { itemName: true }
+  const [fridgeModal, setFridgeModal] = useState(null) // 추가할 아이템
+  const [fridgeForm, setFridgeForm] = useState({})
+  const [saving, setSaving] = useState(false)
+
+  const getDefaultExpiry = (category) => {
+    const days = DEFAULT_EXPIRY[category] || 7
+    const date = new Date()
+    date.setDate(date.getDate() + days)
+    return date.toISOString().split("T")[0]
+  }
+
+  const openFridgeModal = (item) => {
+    const category = item.category || "기타"
+    setFridgeForm({
+      name: item.name,
+      quantity: item.amount || "",
+      unit: item.unit || "개",
+      category,
+      expiryDate: getDefaultExpiry(category)
+    })
+    setFridgeModal(item)
+  }
+
+  const handleAddToFridge = async () => {
+    if (!fridgeForm.name.trim() || !userId) return
+    setSaving(true)
+    try {
+      await addDoc(collection(db, "ingredients"), {
+        ...fridgeForm,
+        userId,
+        status: "ACTIVE",
+        source: "SHOPPING",
+        addedAt: new Date().toISOString()
+      })
+      setAddedItems(prev => ({ ...prev, [fridgeModal.name]: true }))
+      setFridgeModal(null)
+    } catch (e) {
+      console.error("냉장고 추가 실패:", e)
+      alert("추가에 실패했어요. 다시 시도해주세요.")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const grouped = {}
+  ;(shoppingList || []).forEach(item => {
+    const cat = item.category || "기타"
+    if (!grouped[cat]) grouped[cat] = []
+    grouped[cat].push(item)
+  })
+
+  return (
+    <div className="min-h-screen pb-10" style={{ background: "#FFF9F5" }}>
+      <div className="flex items-center justify-between px-5 pt-6 pb-4">
+        <button onClick={onBack} className="text-2xl" style={{ color: "#FF8FAB" }}>←</button>
+        <p className="text-lg font-bold" style={{ color: "#3D3D3D" }}>장보기 목록</p>
+        <div className="w-8" />
+      </div>
+
+      {shoppingList && shoppingList.length > 0 ? (
+        <>
+          <div className="mx-5 mb-4 px-3 py-2 rounded-xl flex items-center gap-2" style={{ background: "#E8F5E9" }}>
+            <span style={{ fontSize: "14px" }}>💡</span>
+            <p className="text-xs" style={{ color: "#388E3C" }}>장을 보고 나서 <b>+ 냉장고</b> 버튼으로 바로 재료를 추가해보세요</p>
+          </div>
+          <div className="px-5 flex flex-col gap-4">
+            {Object.entries(grouped).map(([category, items]) => (
+              <div key={category} className="rounded-2xl p-4" style={{ background: "#fff", boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }}>
+                <p className="text-sm font-bold mb-3" style={{ color: "#FF8FAB" }}>{category}</p>
+                {items.map((item, i) => {
+                  const added = addedItems[item.name]
+                  return (
+                    <div key={i} className="flex items-center justify-between py-2.5 border-b" style={{ borderColor: "#f5f5f5" }}>
+                      <div className="flex items-center gap-2">
+                        <span>{added ? "✅" : "🛒"}</span>
+                        <span className="text-sm font-bold" style={{ color: added ? "#aaa" : "#3D3D3D", textDecoration: added ? "line-through" : "none" }}>
+                          {item.name}
+                        </span>
+                        <span className="text-xs" style={{ color: "#bbb" }}>{item.amount}{item.unit}</span>
+                      </div>
+                      <button
+                        onClick={() => !added && openFridgeModal(item)}
+                        className="text-xs font-bold px-2.5 py-1 rounded-full"
+                        style={{
+                          background: added ? "#E8F5E9" : "#FFF0F3",
+                          color: added ? "#388E3C" : "#FF8FAB",
+                          border: added ? "1px solid #C8E6C9" : "1px solid #FFD1DC",
+                          cursor: added ? "default" : "pointer"
+                        }}>
+                        {added ? "✓ 추가됨" : "+ 냉장고"}
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <div className="mx-5 p-8 rounded-2xl text-center" style={{ background: "#fff" }}>
+          <div className="text-4xl mb-3">🎉</div>
+          <p className="text-lg font-bold" style={{ color: "#3D3D3D" }}>추가 구매할 재료가 없어요!</p>
+        </div>
+      )}
+
+      {/* 냉장고 추가 모달 */}
+      {fridgeModal && (
+        <div className="fixed inset-0 flex items-end justify-center z-50" style={{ background: "rgba(0,0,0,0.4)" }}>
+          <div className="w-full max-w-lg rounded-t-3xl p-6" style={{ background: "#fff" }}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-base font-bold" style={{ color: "#3D3D3D" }}>🧊 냉장고에 추가</h3>
+              <button onClick={() => setFridgeModal(null)} style={{ color: "#aaa", fontSize: 18 }}>✕</button>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <input
+                value={fridgeForm.name}
+                onChange={e => setFridgeForm(f => ({ ...f, name: e.target.value }))}
+                className="w-full px-4 py-3 rounded-xl text-sm outline-none"
+                style={{ background: "#FFF9F5", border: "1px solid #FFE0E6", color: "#3D3D3D" }}
+                placeholder="재료 이름"
+              />
+              <div className="flex gap-2">
+                <input
+                  value={fridgeForm.quantity}
+                  onChange={e => setFridgeForm(f => ({ ...f, quantity: e.target.value }))}
+                  className="flex-1 px-4 py-3 rounded-xl text-sm outline-none"
+                  style={{ background: "#FFF9F5", border: "1px solid #FFE0E6", color: "#3D3D3D" }}
+                  placeholder="수량"
+                />
+                <select
+                  value={fridgeForm.unit}
+                  onChange={e => setFridgeForm(f => ({ ...f, unit: e.target.value }))}
+                  className="px-3 py-3 rounded-xl text-sm outline-none"
+                  style={{ background: "#FFF9F5", border: "1px solid #FFE0E6", color: "#3D3D3D" }}
+                >
+                  {UNITS.map(u => <option key={u}>{u}</option>)}
+                </select>
+              </div>
+              <select
+                value={fridgeForm.category}
+                onChange={e => setFridgeForm(f => ({ ...f, category: e.target.value, expiryDate: getDefaultExpiry(e.target.value) }))}
+                className="w-full px-4 py-3 rounded-xl text-sm outline-none"
+                style={{ background: "#FFF9F5", border: "1px solid #FFE0E6", color: "#3D3D3D" }}
+              >
+                {CATEGORIES.map(c => <option key={c}>{c}</option>)}
+              </select>
+              <div>
+                <p className="text-xs mb-1" style={{ color: "#aaa" }}>소비기한</p>
+                <input
+                  type="date"
+                  value={fridgeForm.expiryDate}
+                  onChange={e => setFridgeForm(f => ({ ...f, expiryDate: e.target.value }))}
+                  className="w-full px-4 py-3 rounded-xl text-sm outline-none"
+                  style={{ background: "#FFF9F5", border: "1px solid #FFE0E6", color: "#3D3D3D" }}
+                />
+              </div>
+              <button
+                onClick={handleAddToFridge}
+                disabled={saving}
+                className="w-full py-3.5 rounded-xl text-base font-bold text-white"
+                style={{ background: saving ? "#ddd" : "#A8D8B9" }}
+              >
+                {saving ? "추가 중..." : "🧊 냉장고에 추가하기"}
+              </button>
+            </div>
           </div>
         </div>
       )}
