@@ -304,7 +304,8 @@ JSON만 출력하세요. 다른 텍스트 없이.
 
 // ─── 사용량 제한 ─────────────────────────────────────────────────────────────
 async function checkAndIncrementUsage(uid) {
-  const today = new Date().toISOString().split("T")[0];
+  const kst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const today = kst.toISOString().split("T")[0];
   const ref = db.collection("apiUsage").doc(`${uid}_${today}`);
   const snap = await ref.get();
   const count = snap.exists ? snap.data().count : 0;
