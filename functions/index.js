@@ -1,249 +1,358 @@
-import { onRequest } from "firebase-functions/v2/https"
-import { defineSecret } from "firebase-functions/params"
-import { initializeApp } from "firebase-admin/app"
-import { getAuth } from "firebase-admin/auth"
-import { getFirestore } from "firebase-admin/firestore"
-import Anthropic from "@anthropic-ai/sdk"
+/**
+ * functions/index.js — YumYum Cloud Functions (최종본)
+ *
+ * Claude API → Gemini Flash 교체 + RAG(소아과 가이드라인) + Few-Shot + LLM-as-a-Judge
+ *
+ * 파일 구조:
+ *   functions/
+ *     index.js   ← 이 파일
+ *     rag.js     ← RAG 조회/컨텍스트 빌드 모듈
+ */
 
-initializeApp()
-const claudeApiKey = defineSecret("CLAUDE_API_KEY")
-const firestore = getFirestore()
+const { onRequest } = require("firebase-functions/v2/https");
+const { defineSecret } = require("firebase-functions/params");
+const admin = require("firebase-admin");
+const cors = require("cors")({ origin: true });
+const { retrieveKnowledge, buildPromptContext, buildJudgeRules } = require("./rag");
 
-export const generateMealSchedule = onRequest(
-  { secrets: [claudeApiKey], region: "asia-northeast3", timeoutSeconds: 120, cors: true, invoker: "public" },
-  async (req, res) => {
-    if (req.method !== "POST") {
-      res.status(405).json({ error: "Method not allowed" })
-      return
-    }
+admin.initializeApp();
+const db = admin.firestore();
 
-    // Firebase Auth 토큰 검증
-    const authHeader = req.headers.authorization || ""
-    const token = authHeader.startsWith("Bearer ") ? authHeader.split("Bearer ")[1] : null
-    if (!token) {
-      res.status(401).json({ error: "로그인이 필요합니다." })
-      return
-    }
+// ─── Secret ─────────────────────────────────────────────────────────────────
+const GEMINI_API_KEY = defineSecret("GEMINI_API_KEY");
 
-    let uid
-    try {
-      const decoded = await getAuth().verifyIdToken(token)
-      uid = decoded.uid
-    } catch (e) {
-      res.status(401).json({ error: "인증이 유효하지 않습니다." })
-      return
-    }
+// ─── 상수 ───────────────────────────────────────────────────────────────────
+const DAILY_LIMIT = 5;
+const GEMINI_MODEL = "gemini-2.0-flash";
+const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
-    // 하루 5회 제한 체크
-    const today = new Date().toISOString().split("T")[0]
-    const usageRef = firestore.collection("apiUsage").doc(`${uid}_${today}`)
-    const usageDoc = await usageRef.get()
-    const currentCount = usageDoc.exists ? usageDoc.data().count : 0
-
-    if (currentCount >= 5) {
-      res.status(429).json({ error: "오늘 식단표 생성 횟수(5회)를 모두 사용했어요. 내일 다시 시도해주세요!" })
-      return
-    }
-
-    const { babyName, stage, stageLabel, mealsPerDay, allergies, fridgeIngredients, startDate, endDate, comment, mode, slot, otherMeals, userPrompt } = req.body
-
-    // ===== 단일 메뉴 변경 모드 =====
-    if (mode === "singleMeal") {
-      if (!stage || !slot) {
-        res.status(400).json({ error: "필수 데이터가 누락되었습니다." })
-        return
-      }
-
-      const stageGuide = {
-        EARLY: "미음, 퓨레 형태. 아주 부드럽고 묽게.",
-        MID: "다진 이유식, 죽 형태. 2~3가지 재료 조합.",
-        LATE: "무른밥 이유식. 다진 반찬. 다양한 재료.",
-        COMPLETE: "진밥/일반식. 어른 식사와 비슷하지만 간을 약하게."
-      }
-
-      const allergyText = allergies && allergies.length > 0 ? allergies.join(", ") : "없음"
-      const otherText = otherMeals && otherMeals.length > 0 ? otherMeals.join(", ") : "없음"
-      const userReq = userPrompt ? `\n\n사용자 요청: ${userPrompt}` : ""
-
-      const singlePrompt = `당신은 이유식 전문 영양사입니다.
-
-아기 정보:
-- 단계: ${stage} (${stageLabel})
-- 알레르기: ${allergyText}
-
-이유식 단계 가이드: ${stageGuide[stage] || stageGuide.LATE}
-
-${slot} 메뉴를 새로 1개만 만들어주세요.
-
-같은 날 다른 끼니 메뉴: ${otherText}
-(위 메뉴와 겹치지 않게 해주세요)${userReq}
-
-규칙:
-1. 아기의 이유식 단계에 적합한 레시피를 만들어주세요
-2. 재료와 간단한 조리법(3~4단계)을 포함하세요
-3. 알레르기 재료는 절대 사용하지 마세요
-
-반드시 아래 JSON 형식으로만 응답하세요:
+// ─── Few-Shot 예시 ───────────────────────────────────────────────────────────
+// 포맷 학습 목적 — JSON 파싱 오류와 재시도 비용을 줄임
+const FEW_SHOT_SINGLE = `
+[출력 형식 예시 - 이 형식을 반드시 따르세요]
 {
-  "recipeTitle": "레시피 제목",
-  "ingredients": [{ "name": "재료명", "amount": "수량", "unit": "단위" }],
-  "steps": ["1단계 설명", "2단계 설명", "3단계 설명"],
-  "reason": "추천 이유 한줄"
-}`
+  "recipeTitle": "소고기당근죽",
+  "ingredients": [
+    {"name": "쌀", "amount": "30", "unit": "g"},
+    {"name": "소고기", "amount": "20", "unit": "g"},
+    {"name": "당근", "amount": "15", "unit": "g"}
+  ],
+  "steps": [
+    "쌀을 30분 불린 후 7배 물과 함께 냄비에 넣는다",
+    "소고기는 핏물 제거 후 삶아 2~3mm로 잘게 다진다",
+    "당근을 삶아 2~3mm 크기로 으깬다",
+    "죽이 끓으면 소고기와 당근을 넣고 5분 더 끓인다"
+  ],
+  "reason": "철분 풍부한 소고기에 비타민C가 함유된 당근을 조합해 철분 흡수율을 높인 중기 이유식입니다"
+}`;
+
+const FEW_SHOT_SCHEDULE = `
+[출력 형식 예시 - 이 형식을 반드시 따르세요]
+[
+  {
+    "date": "2026-04-10",
+    "day": "금",
+    "meals": [
+      {
+        "slot": "아침",
+        "recipeTitle": "닭고기브로콜리진밥",
+        "ingredients": [
+          {"name": "쌀", "amount": "50", "unit": "g"},
+          {"name": "닭고기", "amount": "30", "unit": "g"},
+          {"name": "브로콜리", "amount": "25", "unit": "g"}
+        ],
+        "steps": [
+          "쌀을 30분 불린 뒤 5배 물과 함께 끓인다",
+          "닭고기를 삶아 5mm 크기로 잘게 찢는다",
+          "브로콜리를 스팀으로 2분 쪄서 5mm로 다진다",
+          "진밥에 닭고기와 브로콜리를 섞어 한 번 더 끓인다"
+        ],
+        "reason": "단백질과 비타민C가 균형잡힌 후기 이유식입니다"
+      }
+    ]
+  }
+]`;
+
+// ─── Gemini API 호출 ─────────────────────────────────────────────────────────
+async function callGemini(apiKey, prompt, { temperature = 0.7, maxTokens = 4096 } = {}) {
+  const res = await fetch(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature,
+        maxOutputTokens: maxTokens,
+        responseMimeType: "application/json", // JSON 모드 강제 → 파싱 오류 최소화
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Gemini API 오류 ${res.status}: ${errText}`);
+  }
+
+  const data = await res.json();
+  return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+}
+
+// ─── JSON 안전 파싱 ──────────────────────────────────────────────────────────
+function safeParseJSON(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    const match = text.match(/```json\s*([\s\S]*?)```/) || text.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
+    if (match) return JSON.parse(match[1] || match[0]);
+    throw new Error("JSON 파싱 실패: " + text.slice(0, 200));
+  }
+}
+
+// ─── LLM-as-a-Judge ──────────────────────────────────────────────────────────
+/**
+ * 생성된 식단을 같은 Flash 모델로 검증합니다.
+ * HARD 규칙만 넣어 Judge 호출 토큰을 최소화합니다.
+ */
+async function judgeResult(apiKey, generated, { stage, allergies, hardRulesForJudge, mode }) {
+  const judgeRulesText = buildJudgeRules(hardRulesForJudge);
+
+  const prompt = `
+당신은 이유식 안전 검증 전문가입니다. 아래 규칙에 따라 생성된 식단을 검증하세요.
+JSON으로만 응답하며, 다른 텍스트는 절대 포함하지 마세요.
+
+[검증 규칙]
+${judgeRulesText}
+
+[추가 확인 사항]
+- 사용자 알레르기 목록: ${allergies.length ? allergies.join(", ") : "없음"} → 이 재료 및 파생 재료 포함 금지
+- 이유식 단계: ${stage}
+${mode === "schedule" ? "- 같은 날 끼니 간 주재료 중복 여부 확인" : ""}
+
+[검증할 식단]
+${JSON.stringify(generated)}
+
+[응답 형식]
+{
+  "pass": true 또는 false,
+  "issues": ["발견된 문제점 (없으면 빈 배열)"],
+  "fixSuggestion": "수정 방향 (pass가 true이면 null)"
+}
+`.trim();
+
+  const raw = await callGemini(apiKey, prompt, { temperature: 0.1, maxTokens: 512 });
+  return safeParseJSON(raw);
+}
+
+// ─── 식단 전체 생성 ──────────────────────────────────────────────────────────
+async function generateFullSchedule(apiKey, params) {
+  const { babyName, stage, stageLabel, mealsPerDay, allergies, fridgeIngredients, startDate, endDate, comment } = params;
+
+  const fridgeNames = (fridgeIngredients || []).map((i) => i.name);
+  const allergyText = allergies?.length ? allergies.join(", ") : "없음";
+  const slots = mealsPerDay === 1 ? ["아침"] : mealsPerDay === 2 ? ["아침", "저녁"] : ["아침", "점심", "저녁"];
+
+  // 1. RAG: 소아과 가이드라인 조회
+  const knowledge = await retrieveKnowledge({
+    stage,
+    allergies: allergies || [],
+    ingredients: fridgeNames,
+  });
+  const ragContext = buildPromptContext(knowledge);
+
+  // 2. 날짜 목록 생성
+  const dates = [];
+  const cur = new Date(startDate);
+  const end = new Date(endDate);
+  const dayNames = ["일", "월", "화", "수", "목", "금", "토"];
+  while (cur <= end) {
+    dates.push({ date: cur.toISOString().split("T")[0], day: dayNames[cur.getDay()] });
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  // 3. 프롬프트 구성 (RAG + Few-Shot)
+  const prompt = `
+당신은 소아과 전문 영양사입니다. 아래 전문 가이드라인을 완전히 준수하여 이유식 식단을 생성하세요.
+
+${ragContext}
+
+${FEW_SHOT_SCHEDULE}
+
+[생성 조건]
+- 아기 이름: ${babyName}
+- 이유식 단계: ${stageLabel}
+- 기간: ${startDate} ~ ${endDate} (${dates.length}일)
+- 하루 ${mealsPerDay}끼: ${slots.join(", ")}
+- 절대 금지 알레르기: ${allergyText}
+- 냉장고 재료 우선 사용: ${fridgeNames.length ? fridgeNames.join(", ") : "없음"}
+- 추가 요청: ${comment || "없음"}
+
+[생성 규칙]
+1. HARD CONSTRAINT 절대 준수 (위반 시 해당 레시피 전체 무효)
+2. 물성(Texture) 가이드라인의 입자 크기와 농도를 steps에 구체적으로 명시
+3. 영양 흡수 시너지 조합을 최대한 활용 (예: 철분 식품 + 비타민C 채소)
+4. 같은 날 끼니 간 주재료 중복 금지
+5. 주차별로 단백질 소스 다양화 (소고기 → 닭고기 → 두부 → 생선 등)
+6. 냉장고 재료를 우선 소진하되 영양 균형 유지
+7. reason에 영양학적 근거 포함
+
+생성할 날짜 목록: ${JSON.stringify(dates)}
+
+JSON 배열만 출력하세요. 다른 텍스트 없이.
+`.trim();
+
+  // 4. 생성
+  const rawSchedule = await callGemini(apiKey, prompt, { temperature: 0.75, maxTokens: 8192 });
+  const schedule = safeParseJSON(rawSchedule);
+
+  // 5. LLM-as-a-Judge 검증
+  const judgment = await judgeResult(apiKey, schedule, {
+    stage,
+    allergies: allergies || [],
+    hardRulesForJudge: knowledge.hardRulesForJudge,
+    mode: "schedule",
+  });
+
+  console.log("Judge 결과:", JSON.stringify(judgment));
+
+  let finalSchedule = schedule;
+  if (!judgment.pass) {
+    // 재생성 (1회) — 문제점과 수정 방향을 프롬프트에 추가
+    console.log("Judge 실패, 재생성:", judgment.issues);
+    const retryPrompt = prompt + `
+
+[⚠️ 이전 생성 실패 — 반드시 수정]
+발견된 문제: ${judgment.issues.join(", ")}
+수정 방향: ${judgment.fixSuggestion || "위 문제를 모두 해결하세요"}
+동일한 실수를 반복하면 안 됩니다.`;
+
+    const rawRetry = await callGemini(apiKey, retryPrompt, { temperature: 0.5, maxTokens: 8192 });
+    finalSchedule = safeParseJSON(rawRetry);
+  }
+
+  // 6. 장보기 목록 + 팁 생성 (가벼운 별도 호출)
+  const shoppingPrompt = `
+이유식 식단 재료를 분석해 장보기 목록을 JSON으로만 생성하세요.
+
+냉장고에 이미 있는 재료 (구매 불필요): ${fridgeNames.join(", ") || "없음"}
+
+식단: ${JSON.stringify(finalSchedule)}
+
+[응답 형식]
+{
+  "shoppingList": [
+    {"name": "재료명", "amount": "수량", "unit": "단위", "category": "채소|육류|해산물|유제품|곡류|양념|기타"}
+  ],
+  "tips": "이번 주 식단의 영양학적 특징과 보관 팁 (2~3문장)"
+}`.trim();
+
+  const shoppingRaw = await callGemini(apiKey, shoppingPrompt, { temperature: 0.3, maxTokens: 1024 });
+  const { shoppingList, tips } = safeParseJSON(shoppingRaw);
+
+  return { schedule: finalSchedule, shoppingList, tips };
+}
+
+// ─── 개별 메뉴 변경 ──────────────────────────────────────────────────────────
+async function generateSingleMeal(apiKey, params) {
+  const { stage, stageLabel, allergies, slot, otherMeals, userPrompt } = params;
+
+  // 1. RAG 조회
+  const knowledge = await retrieveKnowledge({
+    stage,
+    allergies: allergies || [],
+    ingredients: [],
+  });
+  const ragContext = buildPromptContext(knowledge);
+
+  // 2. 프롬프트 구성
+  const prompt = `
+당신은 소아과 전문 영양사입니다. 아래 가이드라인을 완전히 준수하여 이유식 1개를 생성하세요.
+
+${ragContext}
+
+${FEW_SHOT_SINGLE}
+
+[생성 조건]
+- 이유식 단계: ${stageLabel}
+- 끼니: ${slot}
+- 절대 금지 알레르기: ${(allergies || []).join(", ") || "없음"}
+- 같은 날 다른 끼니 (주재료 겹침 금지): ${(otherMeals || []).join(", ") || "없음"}
+- 추가 요청: ${userPrompt || "없음"}
+
+JSON만 출력하세요. 다른 텍스트 없이.
+`.trim();
+
+  const raw = await callGemini(apiKey, prompt, { temperature: 0.85, maxTokens: 1024 });
+  const meal = safeParseJSON(raw);
+
+  // 3. Judge 검증
+  const judgment = await judgeResult(apiKey, meal, {
+    stage,
+    allergies: allergies || [],
+    hardRulesForJudge: knowledge.hardRulesForJudge,
+    mode: "single",
+  });
+
+  if (!judgment.pass) {
+    console.log("단일 메뉴 Judge 실패, 재생성:", judgment.issues);
+    const retryPrompt = prompt + `\n\n[이전 실패 원인: ${judgment.issues.join(", ")}] 반드시 수정하세요.`;
+    const rawRetry = await callGemini(apiKey, retryPrompt, { temperature: 0.5, maxTokens: 1024 });
+    return safeParseJSON(rawRetry);
+  }
+
+  return meal;
+}
+
+// ─── 사용량 제한 ─────────────────────────────────────────────────────────────
+async function checkAndIncrementUsage(uid) {
+  const today = new Date().toISOString().split("T")[0];
+  const ref = db.collection("apiUsage").doc(`${uid}_${today}`);
+  const snap = await ref.get();
+  const count = snap.exists ? snap.data().count : 0;
+  if (count >= DAILY_LIMIT) return false;
+  await ref.set({ count: count + 1, updatedAt: new Date().toISOString() }, { merge: true });
+  return true;
+}
+
+// ─── Cloud Function 엔트리포인트 ─────────────────────────────────────────────
+exports.generateMealSchedule = onRequest(
+  {
+    secrets: [GEMINI_API_KEY],
+    timeoutSeconds: 300,
+    memory: "512MiB",
+    region: "asia-northeast3",
+  },
+  async (req, res) => {
+    cors(req, res, async () => {
+      if (req.method !== "POST") return res.status(405).json({ error: "POST만 허용" });
+
+      // 인증
+      const idToken = (req.headers.authorization || "").replace("Bearer ", "");
+      if (!idToken) return res.status(401).json({ error: "인증 토큰 없음" });
+
+      let uid;
+      try {
+        uid = (await admin.auth().verifyIdToken(idToken)).uid;
+      } catch {
+        return res.status(401).json({ error: "유효하지 않은 토큰" });
+      }
+
+      // 사용량 제한
+      if (!(await checkAndIncrementUsage(uid))) {
+        return res.status(429).json({ error: "오늘 사용 한도(5회)를 초과했습니다" });
+      }
 
       try {
-        const client = new Anthropic({ apiKey: claudeApiKey.value() })
-        const message = await client.messages.create({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 2048,
-          messages: [{ role: "user", content: singlePrompt }]
-        })
+        const apiKey = GEMINI_API_KEY.value();
+        const body = req.body;
+        const result = body.mode === "singleMeal"
+          ? await generateSingleMeal(apiKey, body)
+          : await generateFullSchedule(apiKey, body);
 
-        const text = message.content[0].text
-        const jsonMatch = text.match(/\{[\s\S]*\}/)
-        if (!jsonMatch) throw new Error("JSON not found")
-        const result = JSON.parse(jsonMatch[0])
-
-        // 사용량 카운트 (단일 변경도 카운트)
-        await usageRef.set({ count: currentCount + 1, updatedAt: new Date().toISOString() }, { merge: true })
-
-        res.json(result)
-      } catch (e) {
-        console.error("Single meal error:", e)
-        res.status(500).json({ error: "메뉴 생성에 실패했습니다." })
+        return res.status(200).json(result);
+      } catch (err) {
+        console.error("처리 오류:", err);
+        return res.status(500).json({ error: "서버 오류", detail: err.message });
       }
-      return
-    }
-
-    // ===== 전체 식단 생성 모드 =====
-    if (!stage || !startDate || !endDate) {
-      res.status(400).json({ error: "필수 데이터가 누락되었습니다." })
-      return
-    }
-
-    // 날짜 범위 계산
-    const start = new Date(startDate)
-    const end = new Date(endDate)
-    const dayCount = Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1
-
-    if (dayCount < 1 || dayCount > 14) {
-      res.status(400).json({ error: "기간은 1일~14일 사이로 선택해주세요." })
-      return
-    }
-
-    const dates = []
-    const dayNames = ["일", "월", "화", "수", "목", "금", "토"]
-    for (let i = 0; i < dayCount; i++) {
-      const d = new Date(start)
-      d.setDate(start.getDate() + i)
-      dates.push({ date: d.toISOString().split("T")[0], day: dayNames[d.getDay()] })
-    }
-
-    const mealSlots = {
-      EARLY: ["아침"],
-      MID: ["아침", "저녁"],
-      LATE: ["아침", "점심", "저녁"],
-      COMPLETE: ["아침", "점심", "저녁"]
-    }
-
-    const fridgeText = fridgeIngredients && fridgeIngredients.length > 0
-      ? fridgeIngredients.map(ing => `- ${ing.name} (${ing.quantity}${ing.unit}, 유통기한: ${ing.expiryDate})`).join("\n")
-      : "- 냉장고에 재료가 없습니다"
-
-    const allergyText = allergies && allergies.length > 0
-      ? allergies.join(", ")
-      : "없음"
-
-    const slots = mealSlots[stage] || ["아침", "점심", "저녁"]
-
-    const dateListText = dates.map(d => `${d.date} (${d.day})`).join(", ")
-
-    const commentText = comment && comment.trim()
-      ? `\n\n사용자 요청사항:\n${comment.trim()}`
-      : ""
-
-    const stageGuide = {
-      EARLY: "미음, 퓨레 형태. 쌀미음, 감자퓨레, 고구마퓨레, 애호박미음, 브로콜리퓨레 등. 한 가지 재료씩 시작. 아주 부드럽고 묽게.",
-      MID: "다진 이유식. 죽 형태. 소고기죽, 닭가슴살야채죽, 연두부달걀죽, 시금치감자죽 등. 2~3가지 재료 조합. 약간의 알갱이 가능.",
-      LATE: "무른밥 이유식. 진밥에 다진 반찬. 소고기무른밥, 연어야채밥, 닭고기채소볶음밥, 두부스테이크 등. 다양한 재료 조합. 손으로 잡아먹는 핑거푸드도 가능.",
-      COMPLETE: "진밥/일반식에 가까운 유아식. 소고기덮밥, 치즈오므라이스, 닭가슴살볶음밥, 미니햄버그스테이크 등. 어른 식사와 비슷하지만 간을 약하게."
-    }
-
-    const prompt = `당신은 이유식 전문 영양사입니다. 아기에게 맞는 새로운 레시피를 직접 만들어주세요.
-
-아기 정보:
-- 이름: ${babyName || "우리 아기"}
-- 단계: ${stage} (${stageLabel})
-- 알레르기: ${allergyText}
-- 하루 식사 횟수: ${mealsPerDay}회
-- 끼니: ${slots.join(", ")}
-
-이유식 단계 가이드:
-${stageGuide[stage] || stageGuide.LATE}
-
-냉장고 재료 (유통기한):
-${fridgeText}
-
-위 정보를 바탕으로 아래 기간의 이유식 식단표를 직접 창작해주세요.
-기간: ${dateListText} (총 ${dayCount}일)${commentText}
-
-규칙:
-1. 아기의 이유식 단계에 적합한 새로운 레시피를 직접 만들어주세요
-2. 각 레시피에 재료와 간단한 조리법(3~4단계)을 포함하세요
-3. 냉장고에 있는 재료를 우선 활용하세요 (유통기한 임박 순)
-4. 알레르기 재료는 절대 사용하지 마세요
-5. 같은 재료를 여러 끼니에 활용해도 되지만, 매 끼니 레시피 이름과 조리법은 다르게 만들어주세요
-6. 다양한 재료 조합과 영양 균형을 고려하되, 냉장고 재료는 여러 끼니에 걸쳐 반복 사용해도 됩니다
-7. 장보기 목록은 냉장고에 없는 재료만 포함하세요
-8. 레시피 이름은 아기 엄마가 이해하기 쉽게 지어주세요
-
-반드시 아래 JSON 형식으로만 응답하세요. 다른 텍스트는 포함하지 마세요:
-{
-  "schedule": [
-    {
-      "day": "${dates[0].day}",
-      "date": "${dates[0].date}",
-      "meals": [
-        {
-          "slot": "아침",
-          "recipeTitle": "레시피 제목",
-          "ingredients": [
-            { "name": "재료명", "amount": "수량", "unit": "단위" }
-          ],
-          "steps": ["1단계 설명", "2단계 설명", "3단계 설명"],
-          "reason": "선택 이유 한줄"
-        }
-      ]
-    }
-  ],
-  "shoppingList": [
-    { "name": "재료명", "amount": "수량", "unit": "단위", "category": "채소/육류/해산물/유제품/곡류/양념/기타" }
-  ],
-  "tips": "이번 식단 영양 팁 한 줄"
-}`
-
-    try {
-      const client = new Anthropic({ apiKey: claudeApiKey.value() })
-
-      const message = await client.messages.create({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 8192,
-        messages: [{ role: "user", content: prompt }]
-      })
-
-      const responseText = message.content[0].text.trim()
-
-      let parsed
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/)
-      parsed = JSON.parse(jsonMatch ? jsonMatch[0] : responseText)
-
-      // 사용 횟수 증가
-      await usageRef.set({ count: currentCount + 1, updatedAt: new Date().toISOString() }, { merge: true })
-
-      res.status(200).json(parsed)
-    } catch (e) {
-      console.error("Claude API error:", e)
-      res.status(500).json({ error: "AI 응답 생성에 실패했습니다." })
-    }
+    });
   }
-)
+);
