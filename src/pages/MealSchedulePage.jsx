@@ -223,7 +223,7 @@ function MealSchedulePage({ onBack, baby }) {
 
       if (!response.ok) {
         const errBody = await response.json().catch(() => ({}))
-        throw new Error(errBody.error || `HTTP ${response.status}`)
+        throw new Error(errBody.detail || errBody.error || `HTTP ${response.status}`)
       }
 
       const data = await response.json()
@@ -314,7 +314,7 @@ function MealSchedulePage({ onBack, baby }) {
 
       if (!response.ok) {
         const errBody = await response.json().catch(() => ({}))
-        throw new Error(errBody.error || `HTTP ${response.status}`)
+        throw new Error(errBody.detail || errBody.error || `HTTP ${response.status}`)
       }
 
       const data = await response.json()
