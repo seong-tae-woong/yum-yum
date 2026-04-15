@@ -89,8 +89,10 @@ async function callGemini(apiKey, prompt, { temperature = 0.7, maxTokens = 4096 
   });
 
   if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Gemini API 오류 ${res.status}: ${errText}`);
+    if (res.status === 429) {
+      throw new Error("AI 요청 한도를 초과했습니다. 잠시 후 다시 시도해주세요.");
+    }
+    throw new Error(`AI 서버 오류가 발생했습니다. (${res.status})`);
   }
 
   const data = await res.json();
