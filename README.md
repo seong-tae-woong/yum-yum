@@ -28,7 +28,7 @@ Backend:   Firebase Cloud Functions (Node.js 22, 2nd Gen)
 Database:  Firebase Firestore
 Auth:      Firebase Authentication (Google 로그인)
 Hosting:   Firebase Hosting
-AI:        Google Gemini 2.0 Flash + RAG (Firestore 기반 지식 DB)
+AI:        Google Gemini 2.5 Flash via Vertex AI (서비스 계정 자동 인증)
 CI/CD:     GitHub Actions (master push → 자동 Firebase 배포)
 ```
 
@@ -74,7 +74,7 @@ yum-yum/
 
 ### Gemini 2.0 Flash + RAG
 
-- **AI 모델**: Google Gemini 2.0 Flash (REST API 직접 호출)
+- **AI 모델**: Google Gemini 2.5 Flash via Vertex AI (서비스 계정 자동 인증, API 키 불필요)
 - **RAG**: Firestore `knowledgeBase` 컬렉션에서 이유식 단계별 가이드라인 검색
   - 태그 기반 재료 매칭으로 관련 지식 검색
   - HARD 규칙 (알레르기, 금지 재료) / SOFT 규칙 (권장 사항) 분리
@@ -86,7 +86,7 @@ yum-yum/
     ↓
 RAG: Firestore에서 단계별 가이드라인 검색
     ↓
-Gemini 2.0 Flash로 식단 생성
+Gemini 2.5 Flash (Vertex AI)로 식단 생성
     ↓
 Judge: 알레르기/단계 적합성 검증
     ↓ (실패 시 재시도)
