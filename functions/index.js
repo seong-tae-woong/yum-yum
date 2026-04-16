@@ -22,7 +22,7 @@ const db = admin.firestore();
 const DAILY_LIMIT = 5;
 const GEMINI_MODEL = "gemini-2.0-flash";
 const PROJECT_ID = "yum-yum-e7940";
-const LOCATION = "asia-northeast3";
+const LOCATION = "us-central1";
 const VERTEX_ENDPOINT = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${GEMINI_MODEL}:generateContent`;
 
 // ─── Access Token 캐싱 ──────────────────────────────────────────────────────
