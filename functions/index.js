@@ -102,6 +102,7 @@ async function callGemini(apiKey, prompt, { temperature = 0.7, maxTokens = 4096 
         temperature,
         maxOutputTokens: maxTokens,
         responseMimeType: "application/json",
+        thinkingConfig: { thinkingBudget: 0 },
       },
     }),
   });
