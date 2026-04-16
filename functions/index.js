@@ -20,7 +20,7 @@ const db = admin.firestore();
 
 // ─── 상수 ───────────────────────────────────────────────────────────────────
 const DAILY_LIMIT = 5;
-const GEMINI_MODEL = "gemini-2.0-flash";
+const GEMINI_MODEL = "gemini-2.0-flash-001";
 const PROJECT_ID = "yum-yum-e7940";
 const LOCATION = "us-central1";
 const VERTEX_ENDPOINT = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${GEMINI_MODEL}:generateContent`;
