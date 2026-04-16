@@ -10,7 +10,7 @@
  */
 
 const { onRequest } = require("firebase-functions/v2/https");
-// Vertex AI 사용 → API 키 불필요 (서비스 계정 자동 인증)
+const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
 const cors = require("cors")({ origin: true });
 const { retrieveKnowledge, buildPromptContext, buildJudgeRules } = require("./rag");
@@ -18,28 +18,13 @@ const { retrieveKnowledge, buildPromptContext, buildJudgeRules } = require("./ra
 admin.initializeApp();
 const db = admin.firestore();
 
+// ─── Secret ─────────────────────────────────────────────────────────────────
+const GEMINI_API_KEY = defineSecret("GEMINI_API_KEY");
+
 // ─── 상수 ───────────────────────────────────────────────────────────────────
 const DAILY_LIMIT = 5;
-const GEMINI_MODEL = "gemini-2.0-flash-001";
-const PROJECT_ID = "yum-yum-e7940";
-const LOCATION = "us-central1";
-const VERTEX_ENDPOINT = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${GEMINI_MODEL}:generateContent`;
-
-// ─── Access Token 캐싱 ──────────────────────────────────────────────────────
-let cachedToken = null;
-let tokenExpiry = 0;
-
-async function getAccessToken() {
-  if (cachedToken && Date.now() < tokenExpiry) return cachedToken;
-  const res = await fetch(
-    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
-    { headers: { "Metadata-Flavor": "Google" } }
-  );
-  const data = await res.json();
-  cachedToken = data.access_token;
-  tokenExpiry = Date.now() + (data.expires_in - 60) * 1000; // 만료 1분 전 갱신
-  return cachedToken;
-}
+const GEMINI_MODEL = "gemini-2.0-flash";
+const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
 // ─── Few-Shot 예시 ───────────────────────────────────────────────────────────
 // 포맷 학습 목적 — JSON 파싱 오류와 재시도 비용을 줄임
@@ -88,15 +73,11 @@ const FEW_SHOT_SCHEDULE = `
   }
 ]`;
 
-// ─── Gemini API 호출 (Vertex AI) ────────────────────────────────────────────
+// ─── Gemini API 호출 ─────────────────────────────────────────────────────────
 async function callGemini(apiKey, prompt, { temperature = 0.7, maxTokens = 4096 } = {}) {
-  const token = await getAccessToken();
-  const res = await fetch(VERTEX_ENDPOINT, {
+  const res = await fetch(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
@@ -108,9 +89,6 @@ async function callGemini(apiKey, prompt, { temperature = 0.7, maxTokens = 4096 
   });
 
   if (!res.ok) {
-    const errText = await res.text();
-    console.error(`Vertex AI 오류 [${res.status}]:`, errText);
-    console.error("요청 URL:", VERTEX_ENDPOINT);
     if (res.status === 429) {
       throw new Error("AI 요청 한도를 초과했습니다. 잠시 후 다시 시도해주세요.");
     }
@@ -341,6 +319,7 @@ async function checkAndIncrementUsage(uid) {
 // ─── Cloud Function 엔트리포인트 ─────────────────────────────────────────────
 exports.generateMealSchedule = onRequest(
   {
+    secrets: [GEMINI_API_KEY],
     timeoutSeconds: 300,
     memory: "512MiB",
     region: "asia-northeast3",
@@ -366,10 +345,11 @@ exports.generateMealSchedule = onRequest(
       }
 
       try {
+        const apiKey = GEMINI_API_KEY.value();
         const body = req.body;
         const result = body.mode === "singleMeal"
-          ? await generateSingleMeal(null, body)
-          : await generateFullSchedule(null, body);
+          ? await generateSingleMeal(apiKey, body)
+          : await generateFullSchedule(apiKey, body);
 
         return res.status(200).json(result);
       } catch (err) {
